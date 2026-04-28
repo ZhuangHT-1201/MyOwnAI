@@ -1,0 +1,12 @@
+# Core UI / API
+gradio>=6.13,<7
+requests>=2.32
+
+# Media
+pillow>=10
+numpy>=2
+openai-whisper
+edge-tts>=7,<8
+
+# Packaging
+pyinstaller>=6.20

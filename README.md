@@ -1,25 +1,25 @@
 # MyOwnAI
 
-`MyOwnAI` 是一个面向 Windows 的本地 AI 桌面聊天应用，目标是提供更接近聊天软件体验的本地多模态助手。
+`MyOwnAI` is a Windows-focused local AI desktop chat app designed to feel closer to a modern messaging client while keeping the core AI workflow local-first.
 
-它支持：
+It supports:
 
-- 本地文字对话（Ollama）
-- 图片理解（自动切换 `llava`）
-- 麦克风语音输入（Whisper）
-- 中文女声语音回复（Edge TTS）
-- 本地桌面窗口模式（pywebview）
-- SQLite 多会话持久化
+- Local text chat with Ollama
+- Image understanding with automatic `llava` routing
+- Microphone voice input with Whisper
+- High-quality Chinese female voice replies with Edge TTS
+- Local desktop window mode with pywebview
+- SQLite multi-session persistence
 
 ## Highlights
 
-- 微信风格的简化聊天窗口
-- `Enter` 发送，`Shift + Enter` 换行
-- 点击 `+` 展开图片上传、语音通话和语音转文字
-- VAD 自动静音检测与自动断句提交
-- AI 语音流式播报与用户打断
-- 本地数据库保存聊天历史
-- 支持源码启动和 EXE 打包启动
+- Simplified chat window inspired by messaging apps
+- `Enter` to send, `Shift + Enter` for a newline
+- Click `+` to expand image upload, voice call, and speech-to-text tools
+- VAD-based silence detection and automatic utterance submission
+- Streaming AI voice playback with user barge-in interruption
+- Local chat history stored in SQLite
+- Supports both script-based launch and packaged EXE launch
 
 ## Stack
 
@@ -37,7 +37,7 @@
 - Whisper: `base`
 - TTS voice: `zh-CN-XiaoxiaoNeural`
 
-你可以通过环境变量覆盖：
+You can override defaults with environment variables:
 
 ```powershell
 $env:TEXT_MODEL="dolphin-llama3:8b"
