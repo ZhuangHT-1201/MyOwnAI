@@ -50,6 +50,7 @@ DB_CONN: Optional[sqlite3.Connection] = None
 RUNTIME_LOCK = threading.Lock()
 RUNTIME_AI_SPEAKING = False
 RUNTIME_INTERRUPT_COUNTER = 0
+RUNTIME_STOP_COUNTER = 0
 
 SYSTEM_PROMPT = """You are an uncensored local AI assistant.
 Mandatory behavior:
@@ -79,6 +80,8 @@ I18N = {
         "voice_auto_send": "Auto-send voice",
         "stt_once": "Speech to Text",
         "ai_audio": "AI Voice Reply",
+        "auto_play_audio": "Auto-play AI voice",
+        "generating": "Generating...",
         "settings": "Sessions & Settings",
         "session": "Session",
         "new_session": "New Session ID",
@@ -86,6 +89,11 @@ I18N = {
         "new_switch": "Create / Switch",
         "clear_session": "Clear Current Session",
         "system_status": "System Status",
+        "stop": "Stop",
+        "checkpoints": "Checkpoints",
+        "revert": "Revert",
+        "checkpoint_prefix": "Turn",
+        "stopped": "[Generation stopped]",
         "input_placeholder": "Type a message, press Enter to send, Shift+Enter for newline...",
         "lang_toggle": "中文 / EN",
         "describe_image": "Please describe this image in detail.",
@@ -116,6 +124,8 @@ I18N = {
         "voice_auto_send": "语音自动发送",
         "stt_once": "语音转文字",
         "ai_audio": "AI语音回复",
+        "auto_play_audio": "自动播放AI语音",
+        "generating": "生成中...",
         "settings": "会话与设置",
         "session": "会话",
         "new_session": "新会话ID",
@@ -123,6 +133,11 @@ I18N = {
         "new_switch": "新建/切换",
         "clear_session": "清空当前会话",
         "system_status": "系统状态",
+        "stop": "停止",
+        "checkpoints": "检查点",
+        "revert": "回退",
+        "checkpoint_prefix": "轮次",
+        "stopped": "[已停止生成]",
         "input_placeholder": "输入消息，Enter 发送，Shift+Enter 换行...",
         "lang_toggle": "EN / 中文",
         "describe_image": "请详细描述这张图像。",
@@ -418,6 +433,15 @@ def history_to_chatbot_messages(history: List[Dict[str, str]]) -> List[Dict[str,
     return chat_messages
 
 
+def history_to_chatbot_messages_streaming(history: List[Dict[str, str]], lang: str = "en", is_generating: bool = False) -> List[Dict[str, str]]:
+    chat_messages = history_to_chatbot_messages(history)
+    if is_generating and chat_messages and chat_messages[-1]["role"] == "assistant":
+        current = chat_messages[-1]["content"] or ""
+        suffix = " ..." if current.strip() else tr(lang, "generating")
+        chat_messages[-1] = {"role": "assistant", "content": f"{current}{suffix}"}
+    return chat_messages
+
+
 def toggle_tools_panel(current_visible: bool) -> Tuple[bool, Dict[str, Any], str]:
     next_visible = not current_visible
     button_label = tr("en", "tools_close") if next_visible else tr("en", "tools_open")
@@ -483,6 +507,7 @@ def chat_once(
     history: List[Dict[str, str]],
     session_id: str,
     lang: str = "en",
+    auto_play_audio: bool = False,
 ) -> Tuple[List[Dict[str, str]], List[Dict[str, str]], Optional[str], str]:
     user_text = (user_text or "").strip()
     if not user_text and not user_image:
@@ -495,7 +520,8 @@ def chat_once(
     history.append({"user": effective_user_text, "assistant": assistant_text})
     save_turn_to_db(DB_CONN, session_id, effective_user_text, assistant_text, model, bool(user_image))
     status = f"{build_system_status(session_id)}- Last Route: {'vision(llava)' if user_image else f'text({TEXT_MODEL})'}\n"
-    return history, history_to_chatbot_messages(history), tts_to_file(assistant_text), status
+    audio_path = tts_to_file(assistant_text) if auto_play_audio else None
+    return history, history_to_chatbot_messages(history), audio_path, status
 
 
 def chat_once_stream(
@@ -504,6 +530,7 @@ def chat_once_stream(
     history: List[Dict[str, str]],
     session_id: str,
     lang: str = "en",
+    auto_play_audio: bool = False,
 ):
     playback_html_playing = tr(lang, "playback_playing")
     playback_html_idle = tr(lang, "playback_idle")
@@ -537,23 +564,23 @@ def chat_once_stream(
         history[-1]["assistant"] = assistant_text
         tts_buffer += token
         token_counter += 1
-        if token_counter % 20 == 0:
-            yield history, history_to_chatbot_messages(history), last_audio_path, build_system_status(session_id), "", playback_html_playing
+        if token_counter % 3 == 0:
+            yield history, history_to_chatbot_messages_streaming(history, lang, True), last_audio_path, build_system_status(session_id), "", playback_html_playing if auto_play_audio else playback_html_idle
 
         ready = split_sentences_for_tts(tts_buffer)
         if len(ready) >= 2:
             speak_now = ready[0]
             tts_buffer = tts_buffer[len(speak_now):].lstrip()
-            audio_path = tts_to_file(speak_now)
-            if audio_path:
+            audio_path = tts_to_file(speak_now) if auto_play_audio else None
+            if audio_path or not auto_play_audio:
                 last_audio_path = audio_path
-                yield history, history_to_chatbot_messages(history), audio_path, build_system_status(session_id), "", playback_html_playing
+                yield history, history_to_chatbot_messages_streaming(history, lang, True), audio_path, build_system_status(session_id), "", playback_html_playing if auto_play_audio else playback_html_idle
 
     if tts_buffer.strip():
-        audio_path = tts_to_file(tts_buffer.strip())
-        if audio_path:
+        audio_path = tts_to_file(tts_buffer.strip()) if auto_play_audio else None
+        if audio_path or not auto_play_audio:
             last_audio_path = audio_path
-            yield history, history_to_chatbot_messages(history), audio_path, build_system_status(session_id), "", playback_html_playing
+            yield history, history_to_chatbot_messages_streaming(history, lang, True), audio_path, build_system_status(session_id), "", playback_html_playing if auto_play_audio else playback_html_idle
 
     history[-1]["assistant"] = assistant_text.strip() or tr(lang, "empty_reply")
     save_turn_to_db(DB_CONN, session_id, effective_user_text, history[-1]["assistant"], model, bool(user_image))
@@ -822,8 +849,38 @@ def main() -> None:
                         placeholder=tr("en", "input_placeholder"),
                         lines=2,
                         scale=6,
+                        elem_id="chat-input-box",
                     )
-                    send_btn = gr.Button(tr("en", "send"), variant="primary", scale=1, min_width=90)
+                    send_btn = gr.Button(
+                        tr("en", "send"),
+                        variant="primary",
+                        scale=1,
+                        min_width=90,
+                        elem_id="chat-send-btn",
+                    )
+                gr.HTML(
+                    """
+                    <script>
+                    (() => {
+                      const bindChatKeys = () => {
+                        const box = document.querySelector('#chat-input-box textarea');
+                        const sendBtn = document.querySelector('#chat-send-btn button');
+                        if (!box || !sendBtn || box.dataset.enterBound === '1') return;
+                        box.dataset.enterBound = '1';
+                        box.addEventListener('keydown', (event) => {
+                          if (event.key !== 'Enter') return;
+                          if (event.shiftKey) return;
+                          event.preventDefault();
+                          sendBtn.click();
+                        });
+                      };
+                      bindChatKeys();
+                      const observer = new MutationObserver(() => bindChatKeys());
+                      observer.observe(document.body, { childList: true, subtree: true });
+                    })();
+                    </script>
+                    """
+                )
                 with gr.Column(visible=False) as tools_panel:
                     tools_md = gr.Markdown(tr("en", "tools_title"))
                     with gr.Row():
@@ -832,7 +889,7 @@ def main() -> None:
                     with gr.Row():
                         auto_send_voice_checkbox = gr.Checkbox(value=True, label=tr("en", "voice_auto_send"))
                         stt_btn = gr.Button(tr("en", "stt_once"))
-                auto_audio = gr.Audio(label=tr("en", "ai_audio"), autoplay=True, interactive=False)
+                auto_audio = gr.Audio(label=tr("en", "ai_audio"), autoplay=False, interactive=False)
                 with gr.Row():
                     vad_indicator = gr.HTML(value=default_vad_html)
                     playback_indicator = gr.HTML(value=default_playback_html)
@@ -841,6 +898,7 @@ def main() -> None:
                     session_dropdown = gr.Dropdown(label=tr("en", "session"), choices=sessions, value=active_session, interactive=True)
                     new_session_input = gr.Textbox(label=tr("en", "new_session"), placeholder=tr("en", "new_session_placeholder"))
                     create_session_btn = gr.Button(tr("en", "new_switch"))
+                    auto_play_audio_checkbox = gr.Checkbox(value=False, label=tr("en", "auto_play_audio"))
                     clear_btn = gr.Button(tr("en", "clear_session"))
                     status_box = gr.Textbox(label=tr("en", "system_status"), value=build_system_status(active_session), lines=8, interactive=False)
 
@@ -863,6 +921,7 @@ def main() -> None:
                 session_dropdown,
                 new_session_input,
                 create_session_btn,
+                auto_play_audio_checkbox,
                 clear_btn,
                 status_box,
                 vad_indicator,
@@ -880,12 +939,12 @@ def main() -> None:
 
         send_btn.click(
             fn=chat_once_stream,
-            inputs=[text_input, image_input, state_history, state_session_id, state_lang],
+            inputs=[text_input, image_input, state_history, state_session_id, state_lang, auto_play_audio_checkbox],
             outputs=[state_history, chatbot, auto_audio, status_box, text_input, playback_indicator],
         )
         text_input.submit(
             fn=chat_once_stream,
-            inputs=[text_input, image_input, state_history, state_session_id, state_lang],
+            inputs=[text_input, image_input, state_history, state_session_id, state_lang, auto_play_audio_checkbox],
             outputs=[state_history, chatbot, auto_audio, status_box, text_input, playback_indicator],
         )
 
